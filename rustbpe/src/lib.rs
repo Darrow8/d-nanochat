@@ -14,12 +14,7 @@ const GPT4_PATTERN: &str = r"'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{
 
 type Pair = (u32, u32);
 
-#[pyclass]
-pub struct Tokenizer {
-    pub merges: StdHashMap<String, u32>,
-    pub pattern: String,
-    compiled_pattern: Regex,
-}
+
 
 #[derive(Clone, Debug)]
 
@@ -177,12 +172,83 @@ fn count_pairs_parallel(
 
 
 // tokenizer
+#[pyclass]
+pub struct Tokenizer {
+    pub merges: StdHashMap<Pair, u32>,
+    pub pattern: String,
+    compiled_pattern: Regex,
+}
 
-// impl Tokenizer {
-//     fn train_core_incremental(&mut self, mut words: Vec<Word>, counts: Vec<i32>, vocab_size: u32) {
-//         assert!()
-//     }
-// }
+impl Tokenizer {
+    fn train_core_incremental(&mut self, mut words: Vec<Word>, counts: Vec<i32>, vocab_size: u32) {
+        assert!(vocab_size >= 256, "vocab size must be at least 256");
+        let num_merges = vocab_size - 256;
+        log::info!("Starting BPE training: {} merges to compute", num_merges);
+        self.merges.clear();
+
+        // ---- Initial pair_counts and where_to_update (parallel) ----
+        log::info!("Computing init pair counts from {} unique sequences", words.len());
+        let (mut pair_counts, mut where_to_update) = count_pairs_parallel(&words, &counts);
+        
+        // ---- Build heap ----
+        log::info!("Building heap with {} unique pairs", pair_counts.len());
+        let mut heap: OctonaryHeap<MergeJob> = OctonaryHeap::with_capacity(pair_counts.len());
+        // .drain() converts map to iteration of k-v pairs
+        for (pair, pos) in where_to_update.drain() { // pass over all positions of pair
+            // get count from pair_counts 
+            let count_pair = pair_counts.get(&pair); 
+            // either count_pair or 0 if count_pair is None and dereference it 
+            let c = *count_pair.unwrap_or(&0);
+            if c > 0 { // if pair index exists, add to heap 
+                heap.push(MergeJob { 
+                    pair, 
+                    count: c as u64, 
+                    pos })
+            }
+        }
+
+        // ---- Merge loop ----
+        log::info!("Starting merge loop");
+        let mut merges_done = 0u32;
+        let mut last_log_percent = 0u32;
+
+        while merges_done < num_merges {
+            let Some(mut top) = heap.pop() else {break; };
+
+            // lazy refresh
+            let current = *pair_counts.get(&top.pair).unwrap_or(&0);
+            if top.count != current as u64 {
+                top.count = current as u64;
+                if top.count > 0 {
+                    heap.push(top);
+                }
+                continue;
+            }
+            if top.count == 0 {
+                break; 
+            }
+
+            // Record merge
+            let new_id = 256 + merges_done;
+            self.merges.insert(top.pair, new_id);
+            // create updates hashmap
+            let mut local_pos_updates : AHashMap<Pair, AHashSet<usize>> = AHashMap::new();
+            for &word_idx in &top.pos { // pass over 
+                let changes = words[word_idx].merge_pair(top.pair, new_id);
+                for (pair,delta) in changes {
+                    let delta_total = delta * counts[word_idx];
+                    if delta_total != 0 {
+                        *pair_counts.entry(pair).or_default() += delta_total;
+                        if delta > 0 {
+                            local_pos_updates.entry(pair).or_default().insert(word_idx);
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+}
 
 /// The rustbpe Python module
 #[pymodule]

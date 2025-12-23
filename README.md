@@ -14,3 +14,7 @@ I asked ChatGPT to generate a set of milestones for implementing nanochat which 
 Ok looks like I've installed the requisite packages and `uv sync` works. 
 
 I am starting by working through the rustbpe code. 
+
+## Day 2 
+
+Wrote out a lot more of the rustbpe code. Got into the tokenizer implementation. 
