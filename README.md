@@ -1,6 +1,14 @@
 # D-NanoChat
 
 
+## Day 3 
+
+Continued writing out rustbpe code and learned about how tokenizers work. 
+
+## Day 2 
+
+Wrote out a lot more of the rustbpe code. Got into the tokenizer implementation. 
+
 ## Day 1
 
 The ambition of this project is to replicate [nanochat](https://github.com/karpathy/nanochat) without using AI, as Andrej Karpathy recommended in an [interview](https://www.dwarkesh.com/p/andrej-karpathy) with Dwarkesh Patel. 
@@ -15,6 +23,3 @@ Ok looks like I've installed the requisite packages and `uv sync` works.
 
 I am starting by working through the rustbpe code. 
 
-## Day 2 
-
-Wrote out a lot more of the rustbpe code. Got into the tokenizer implementation. 

@@ -213,13 +213,14 @@ impl Tokenizer {
         let mut last_log_percent = 0u32;
 
         while merges_done < num_merges {
+            // get the top pair 
             let Some(mut top) = heap.pop() else {break; };
 
             // lazy refresh
             let current = *pair_counts.get(&top.pair).unwrap_or(&0);
-            if top.count != current as u64 {
-                top.count = current as u64;
-                if top.count > 0 {
+            if top.count != current as u64 { // update top.count if it is incorrect
+                top.count = current as u64; 
+                if top.count > 0 { // if there are still counts, push back to the heap
                     heap.push(top);
                 }
                 continue;
@@ -230,10 +231,12 @@ impl Tokenizer {
 
             // Record merge
             let new_id = 256 + merges_done;
+            // init top pair to merge array
             self.merges.insert(top.pair, new_id);
             // create updates hashmap
             let mut local_pos_updates : AHashMap<Pair, AHashSet<usize>> = AHashMap::new();
             for &word_idx in &top.pos { // pass over 
+                // collect pair-count deltas and apply merge 
                 let changes = words[word_idx].merge_pair(top.pair, new_id);
                 for (pair,delta) in changes {
                     let delta_total = delta * counts[word_idx];
@@ -245,6 +248,19 @@ impl Tokenizer {
                     }
                 }
             }
+
+            // add updated pair 
+            for(pair, pos) in local_pos_updates {
+                let cnt = *pair_counts.get(&pair).unwrap_or(&0);
+                if cnt > 0 {
+                    heap.push(MergeJob { 
+                        pair, 
+                        count: cnt as u64, 
+                        pos })
+                }
+            }
+            
+            merges_done += 1;
 
         }
     }
