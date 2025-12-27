@@ -1,5 +1,8 @@
 # D-NanoChat
 
+## Day 4
+
+Continued writing out rustbpe code and watching Karpathy video on GPT tokenizer. 
 
 ## Day 3 
 

@@ -10,6 +10,26 @@ use compact_str::CompactString;
 use rayon::prelude::*;
 
 // Default GPT-4 style regex pattern for splitting text
+/**
+ * This GPT4 Pattern ensures that pairs of characters and pairs in certain places within a sentence will never be merged
+ * 
+ * From ChatGPT:
+ * \p{L} = any Unicode letter (A–Z, accented letters, Greek, Cyrillic, etc.)
+
+    \p{N} = any Unicode number (0–9 and other numeral systems)
+
+    \r\n are Windows newlines; [\r\n] means either carriage return or newline.
+
+    ++ and ?+ are possessive quantifiers (common in engines like PCRE/Oniguruma/ICU/regex module): they do not backtrack, which makes tokenization faster and more deterministic.
+ * First part: (?i:[sdmt]|ll|ve|re) matches 's, 'll, etc in english words
+ * Second part: [^\r\n\p{L}\p{N}]?+\p{L}+ excludes newline 
+ * Third part: \p{N}{1,3} matches 1 to 3 numbers
+ * Fourth part: ?[^\s\p{L}\p{N}]++[\r\n]* matches puntuation symbols like "...", "?!"
+ * Fifth part: \s*[\r\n] matches newlines
+ * Sixth part: \s+(?!\S) matches trailing whitespace
+ * Seventh part: matches other whitespace
+ */
+
 const GPT4_PATTERN: &str = r"'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+";
 
 type Pair = (u32, u32);
@@ -262,9 +282,148 @@ impl Tokenizer {
             
             merges_done += 1;
 
+            // log progress
+            let percent = (merges_done * 100) / num_merges;
+            if percent > last_log_percent {
+                log::info!(
+                    "Progress: {}% ({}/{} merges) - Last merge: {:?} -> {} (frequency: {})",
+                    current, merges_done, num_merges, top.pair, new_id, top.count
+                );
+                // update percent 
+                last_log_percent = percent; 
+            }
         }
+        log::info!("Finished training: {} merges completed", merges_done);
     }
 }
+
+
+#[pymethods]
+impl Tokenizer {
+    #[new]
+    pub fn new() -> Self {
+        Self { 
+            merges: StdHashMap::new(),
+            pattern: String::new(),
+            compiled_pattern:Regex::new("").expect("Empty regex is valid")
+        }
+    }
+
+    // Train from streaming iterator 
+    // We refill a Rust Vec<String> buffer under the GIL 
+
+    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None))]
+    #[pyo3(text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None)")]
+    pub fn train_from_iterator(
+        &mut self,
+        py: pyo3::Python<'_>,
+        iterator: &pyo3::Bound<'_, pyo3::PyAny>,
+        vocab_size: u32,
+        buffer_size: usize,
+        pattern: Option<String>,
+    ) -> PyResult<()> {
+        let pattern_str = pattern.unwrap_or_else(|| GPT4_PATTERN.to_string());
+
+        self.pattern = pattern_str.clone();
+        self.compiled_pattern = Regex::new(&pattern_str)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid regex: {}",e)))?;
+        
+        let py_iter: pyo3::Py<pyo3::PyAny> = unsafe {
+            pyo3::Py::from_owned_ptr_or_err(py, pyo3::ffi::PyObject_GetIter(iterator.as_ptr()))?
+        };
+
+        let mut counts: AHashMap<CompactString, i32> = AHashMap::new();
+        let mut buf:Vec<String> = Vec::with_capacity(buffer_size);
+
+        log::info!("Processing sequences from iterator (buf size: {})", buffer_size);
+        let mut total_sequences = 0u64; 
+
+        // helper to refill buf with up to buf size strings from python iterator
+        // returns ok true if iterator is exhausted and ok false otherwise
+        let refill = |buf: &mut Vec<String> | -> PyResult<bool> {
+            pyo3::Python::with_gil(|py| {
+                buf.clear();
+                let it = py_iter.bind(py);
+                loop {
+                    if buf.len() >= buffer_size {
+                        return Ok(false);
+                    }
+                    // next iteration 
+                    let next_obj = unsafe {
+                        pyo3::Bound::from_owned_ptr_or_opt(py, pyo3::ffi::PyIter_Next(it.as_ptr()))
+                    };
+                    
+                    match next_obj {
+                        Some(obj) => {
+                            let s: String = obj.extract()?;
+                            buf.push(s);
+                        }
+                        None => {
+                            if pyo3::PyErr::occurred(py) {
+                                return  Err(pyo3::PyErr::fetch(py));
+                            } else {
+                                return Ok(true); // exhausted
+                            }
+                        }
+                    }
+                }
+            })
+        };
+
+        // strem ingestion loop
+        loop {
+            let exhausted = refill(&mut buf)?;
+            if buf.is_empty() && exhausted {
+                break;
+            }
+
+            total_sequences += buf.len() as u64;
+
+            let pattern = self.compiled_pattern.clone();
+            let local:AHashMap<CompactString,i32> = py.allow_threads(|| {
+                buf.par_iter()
+                    .map(|s| {
+                        let mut m:AHashMap<CompactString,i32> = AHashMap::new();
+                        for mat in pattern.find_iter(s) {
+                            let piece = mat.expect("regex match failed").as_str();
+                            *m.entry(CompactString::from(piece)).or_default() += 1;
+                        }
+                        m
+                    })
+                    .reduce(
+                        || AHashMap::new(),
+                        |mut a,b| {
+                            for (k,v) in b {
+                                *a.entry(k).or_default() += v; 
+                            }
+                            a
+                        },
+                    )
+            });
+
+            for (k,v) in local {
+                *counts.entry(k).or_default() += v;
+            }
+
+            if exhausted {
+                break;
+            }
+        }
+        log::info!("Processed {} sequences total, {} unique", total_sequences, counts.len());
+
+        // materialize words and counts
+        let mut words = Vec::with_capacity(counts.len());
+        let mut cvec = Vec::with_capacity(counts.len());
+        for (chunk, c) in counts.into_iter() {
+            words.push(Word::new(chunk.as_bytes().iter().map(|&b| b as u32).collect()));
+            cvec.push(c);
+        }
+
+        self.train_core_incremental(words, cvec, vocab_size);
+        Ok(())
+    }
+}
+
 
 /// The rustbpe Python module
 #[pymodule]
