@@ -1,3 +1,4 @@
+// in order to compile, must run `uv run maturin develop`
 use std::cmp::Ordering;
 use std::collections::HashMap as StdHashMap;
 
@@ -9,27 +10,7 @@ use ahash::{AHashMap, AHashSet};
 use compact_str::CompactString;
 use rayon::prelude::*;
 
-// Default GPT-4 style regex pattern for splitting text
-/**
- * This GPT4 Pattern ensures that pairs of characters and pairs in certain places within a sentence will never be merged
- * 
- * From ChatGPT:
- * \p{L} = any Unicode letter (A–Z, accented letters, Greek, Cyrillic, etc.)
-
-    \p{N} = any Unicode number (0–9 and other numeral systems)
-
-    \r\n are Windows newlines; [\r\n] means either carriage return or newline.
-
-    ++ and ?+ are possessive quantifiers (common in engines like PCRE/Oniguruma/ICU/regex module): they do not backtrack, which makes tokenization faster and more deterministic.
- * First part: (?i:[sdmt]|ll|ve|re) matches 's, 'll, etc in english words
- * Second part: [^\r\n\p{L}\p{N}]?+\p{L}+ excludes newline 
- * Third part: \p{N}{1,3} matches 1 to 3 numbers
- * Fourth part: ?[^\s\p{L}\p{N}]++[\r\n]* matches puntuation symbols like "...", "?!"
- * Fifth part: \s*[\r\n] matches newlines
- * Sixth part: \s+(?!\S) matches trailing whitespace
- * Seventh part: matches other whitespace
- */
-
+// Default GPT-4 style regex pattern for splitting text. Explanation in Notes.md
 const GPT4_PATTERN: &str = r"'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+";
 
 type Pair = (u32, u32);
@@ -195,6 +176,7 @@ fn count_pairs_parallel(
 #[pyclass]
 pub struct Tokenizer {
     pub merges: StdHashMap<Pair, u32>,
+    inv_merges: StdHashMap<u32, Pair>,
     pub pattern: String,
     compiled_pattern: Regex,
 }
@@ -294,6 +276,20 @@ impl Tokenizer {
             }
         }
         log::info!("Finished training: {} merges completed", merges_done);
+
+        // Build inverse merges for decoding
+        self.inv_merges = self.merges.iter().map(|(&k, &v)| (v, k)).collect();
+    }
+
+    fn expand_token(&self, token: u32) -> Vec<u8> {
+        if token >= 256 {
+            let (left, right) = self.inv_merges[&token];
+            let mut result = self.expand_token(left);
+            result.extend(self.expand_token(right));
+            result
+        } else {
+            vec![token as u8]
+        }
     }
 }
 
@@ -304,14 +300,14 @@ impl Tokenizer {
     pub fn new() -> Self {
         Self { 
             merges: StdHashMap::new(),
+            inv_merges: StdHashMap::new(),
             pattern: String::new(),
-            compiled_pattern:Regex::new("").expect("Empty regex is valid")
+            compiled_pattern: Regex::new("").expect("Empty regex is valid")
         }
     }
 
     // Train from streaming iterator 
     // We refill a Rust Vec<String> buffer under the GIL 
-
     #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None))]
     #[pyo3(text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None)")]
     pub fn train_from_iterator(
@@ -422,11 +418,93 @@ impl Tokenizer {
         self.train_core_incremental(words, cvec, vocab_size);
         Ok(())
     }
+
+    // get regex pattern
+    pub fn get_pattern(&self) -> String {
+        self.pattern.clone()
+    }
+
+    /// Return the merges as a dict: {(left, right): merged_id}
+    #[getter]
+    pub fn merges(&self) -> StdHashMap<(u32, u32), u32> {
+        self.merges.clone()
+    }
+
+    pub fn get_mergeable_ranks(&self) -> Vec<(Vec<u8>,u32)> {
+        let mut mergeable_ranks = Vec::new();
+        // build vocabulary from low to high token ids
+        let mut token_bytes: Vec<Vec<u8>> = (0..256_u32).map(|i| vec![i as u8]).collect();
+
+        for (i, bytes) in token_bytes.iter().enumerate() {
+            mergeable_ranks.push((bytes.clone(), i as u32));
+        }
+
+        let mut sorted_merges: Vec<_> = self.merges.iter().collect();
+
+        sorted_merges.sort_by_key(|&(_, &token_id)| token_id);
+
+        for (&pair, &merged_id) in sorted_merges {
+            let (left, right) = pair;
+            let mut merged_bytes = token_bytes[left as usize].clone();
+            merged_bytes.extend(&token_bytes[right as usize]);
+            if token_bytes.len() <= merged_id as usize {
+                token_bytes.resize(merged_id as usize + 1, Vec::new());
+            }
+            token_bytes[merged_id as usize] = merged_bytes.clone();
+            mergeable_ranks.push((merged_bytes, merged_id));
+        }
+
+        mergeable_ranks
+    }
+
+    pub fn encode(&self, text: &str) -> Vec<u32> {
+        let mut all_ids = Vec::new();
+
+        for m in self.compiled_pattern.find_iter(text) {
+            let chunk = m.expect("regex match failed").as_str();
+
+            let mut ids: Vec<u32> = chunk.bytes().map(|b| b as u32).collect();
+
+            while ids.len() >= 2 {
+                let mut best_pair : Option<(usize, Pair, u32)> = None;
+
+                for i in 0..ids.len() - 1  {
+                    let pair: Pair = (ids[i], ids[i+1]);
+                    if let Some(&new_id) = self.merges.get(&pair) {
+                        if best_pair.is_none() || new_id < best_pair.unwrap().2 {
+                            best_pair = Some((i, pair, new_id));
+                        }
+                    }
+                }
+
+                if let Some((idx, _pair, new_id)) = best_pair {
+                    ids[idx] = new_id;
+                    ids.remove(idx + 1);
+                } else {
+                    break;
+                }
+            }
+
+            all_ids.extend(ids);
+        }
+
+        all_ids
+    }
+
+    pub fn decode(&self, data: Vec<u32>) -> String {
+        let mut decoded_vec: Vec<u8> = Vec::new();
+        for token in data.iter() {
+            decoded_vec.extend(self.expand_token(*token));
+        }
+        String::from_utf8(decoded_vec).expect("invalid UTF-8")
+    }
+
 }
 
 
-/// The rustbpe Python module
 #[pymodule]
 fn rustbpe(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init();
+    m.add_class::<Tokenizer>()?;
     Ok(())
 }

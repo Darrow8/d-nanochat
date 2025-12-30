@@ -1,5 +1,24 @@
 # D-NanoChat
 
+Notes from videos, articles, etc: [Notes](Notes.md) 
+
+Plan of building nanochat: [Plan](Plan.md)
+
+init python venv: `source .venv/bin/activate`
+
+
+## Day 6
+
+Finished rust tokenizer. Wrote my own token decoder in rust: 
+
+input_text: The unexamined life is not worth living
+encoded: [84, 104, 101, 32, 117, 110, 101, 120, 97, 109, 105, 110, 101, 100, 32, 108, 105, 102, 101, 32, 105, 115, 32, 110, 111, 116, 32, 119, 111, 114, 116, 104, 32, 108, 105, 118, 105, 110, 103]
+decoded: The unexamined life is not worth living
+
+## Day 5
+
+Finished watching Karpathy video on GPT tokenizer and took notes on it. 
+
 ## Day 4
 
 Continued writing out rustbpe code and watching Karpathy video on GPT tokenizer. 
