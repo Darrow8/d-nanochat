@@ -67,7 +67,3 @@ class DistAdamW(torch.optim.Optimizer):
                 p_slice.add_(other=update,alpha=-1.0)
                 idx += 1 
                 all_reduce_futures.append(dist.all_gather_into_tensor(p, p_slice, async_op = True).get_future())
-                
-                
-                
-            

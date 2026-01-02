@@ -8,6 +8,11 @@ init python venv: `source .venv/bin/activate`
 
 ## Day 8
 
+I have written out AdamW and researched how it is an improvement over SGD. I am now working on the gpt.py file. 
+
+I have decided to directly copy-paste common.py instead of write it out because it is just boring logging and filesystem management code rather than anything important.
+
+I have written out and researched Muon optimizer. 
 
 ## Day 7
 

@@ -41,7 +41,7 @@ This GPT4 Pattern ensures that pairs of characters and pairs in certain places w
 - Seventh part: matches other whitespace
 
 
-## AdamW Algorithm
+## AdamW Optimizer Algorithm
 
 [AdamW Paper](https://arxiv.org/abs/1711.05101), [Adam Paper](https://arxiv.org/abs/1412.6980)
 
@@ -58,28 +58,40 @@ $\theta \leftarrow \theta - \alpha \nabla_\theta \ell(\theta)$
 
 AdamW is the result of several key improvements on SGD: 
 
-- AdamW implements momentum: We add a momentum term which keeps a running track of past gradients in order to speed up optimization, similar to momentum in physics. 
+- We add a momentum term which keeps a running track of past gradients, similar to momentum in physics. 
 
 $$
 \begin{align*}
+\beta_1 &= 0.9\\
 g_t &= \nabla_\theta \ell(\theta) \\
 m_t &= \beta_1 m_{t-1} + (1 - \beta_1)\, g_t
 \end{align*}
 
 $$
 
-- AdamW implements variance: Since we are randomly choosing a datapoint among our dataset, we want to measure the variance in the datapoint relative to the dataset and limit the amount of noise generated. 
+- We add a squared gradient term with a running sum of past squared gradients to limit the variance of the gradient update.
 
 $$
 \begin{align*}
-v_t &= \beta_2 v_{t-1} + (1 - \beta_2)\, g_t^2 \\
+\beta_1 &= 0.999\\
 
+v_t = \beta_2 v_{t-1} + (1 - \beta_2)\, g_t^2 \\
+
+\end{align*}
+$$
+
+- We add bias correction terms in order to limit the influence of momentum and squared gradient values in our first iterations.
+
+$$
+\begin{align*}
+\hat{m}_t &= \frac{m_t}{1 - \beta_1^t},
+\qquad
+\hat{v}_t = \frac{v_t}{1 - \beta_2^t} \\
 \end{align*}
 
 $$
 
-- AdamW implements RMSProp Scaling: we normalize our gradient updates by the square root of 
-
+Below is the full AdamW algorithm. 
 
 $$
 \begin{align*}
@@ -101,5 +113,17 @@ v_t &= \beta_2 v_{t-1} + (1 - \beta_2)\, g_t^2 \\
 -
 \eta \, \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \varepsilon}
 \end{align*}
-
 $$
+
+
+## Muon Optimizer Algorithm 
+
+[Muon Optimizer Video](https://www.youtube.com/watch?v=bO5nvE289ec), [Keller Jordan on Muon](https://kellerjordan.github.io/posts/muon/)
+
+Similarly to AdamW, Muon seeks to fit a model to a dataset. It is faster than AdamW in certain cases, and nanoGPT uses both AdamW and Muon in training.
+
+Muon operates similarly to SGD+momentum except it takes the updates of SGD momentum and uses a Newton-Schulz iteration on them before applying the update. As a result Muon is faster than SGD and AdamW. 
+
+Muon takes advantage of singular value decomposition (SVD). SVD is a principle of matrices showing that any matrix can be reduced to the product 3 matrices where matrices rotate -> stretch -> rotate.
+
+Newton-Schulz matrix iteration finds the nearest semi-orthogonal matrix to the given matrix 
