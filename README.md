@@ -6,14 +6,22 @@ Plan of building nanochat: [Plan](Plan.md)
 
 init python venv: `source .venv/bin/activate`
 
+## Day 8
+
+
+## Day 7
+
+It looks like the advice given from chatgpt was not great on making a plan because the plan they have involves making files that don't exist. Instead I've asked about the repo [DeepWiki](https://deepwiki.com/karpathy/nanochat). 
 
 ## Day 6
 
 Finished rust tokenizer. Wrote my own token decoder in rust: 
 
 input_text: The unexamined life is not worth living
-encoded: [84, 104, 101, 32, 117, 110, 101, 120, 97, 109, 105, 110, 101, 100, 32, 108, 105, 102, 101, 32, 105, 115, 32, 110, 111, 116, 32, 119, 111, 114, 116, 104, 32, 108, 105, 118, 105, 110, 103]
+encoded: [354, 346, 110, 101, 120, 465, 262, 304, 340, 102, 101, 314, 326, 263, 275, 480, 340, 118, 293]
 decoded: The unexamined life is not worth living
+
+
 
 ## Day 5
 

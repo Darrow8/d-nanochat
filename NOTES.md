@@ -39,3 +39,67 @@ This GPT4 Pattern ensures that pairs of characters and pairs in certain places w
 - Fifth part: `\s*[\r\n]` matches newlines
 - Sixth part: `\s+(?!\S)` matches trailing whitespace
 - Seventh part: matches other whitespace
+
+
+## AdamW Algorithm
+
+[AdamW Paper](https://arxiv.org/abs/1711.05101), [Adam Paper](https://arxiv.org/abs/1412.6980)
+
+AdamW is a form of stochastic gradient descent and improves upon SGD.
+
+### Stochastic gradient descent (SGD)
+
+Stochastic gradient descent (SGD) optimizes for the minimum of the loss function by iteratively updating in the direction of the negative gradient. Given our dataset and a starting point, we calculate the loss relative to a chosen datapoint and then compute the gradient of the loss for that datapoint. 
+
+$\theta \leftarrow \theta - \alpha \nabla_\theta \ell(\theta)$
+
+
+### AdamW Improvements
+
+AdamW is the result of several key improvements on SGD: 
+
+- AdamW implements momentum: We add a momentum term which keeps a running track of past gradients in order to speed up optimization, similar to momentum in physics. 
+
+$$
+\begin{align*}
+g_t &= \nabla_\theta \ell(\theta) \\
+m_t &= \beta_1 m_{t-1} + (1 - \beta_1)\, g_t
+\end{align*}
+
+$$
+
+- AdamW implements variance: Since we are randomly choosing a datapoint among our dataset, we want to measure the variance in the datapoint relative to the dataset and limit the amount of noise generated. 
+
+$$
+\begin{align*}
+v_t &= \beta_2 v_{t-1} + (1 - \beta_2)\, g_t^2 \\
+
+\end{align*}
+
+$$
+
+- AdamW implements RMSProp Scaling: we normalize our gradient updates by the square root of 
+
+
+$$
+\begin{align*}
+\text{First moment (momentum):}\\
+m_t &= \beta_1 m_{t-1} + (1 - \beta_1)\, g_t \\
+
+\text{Second moment (uncentered variance):}\\
+v_t &= \beta_2 v_{t-1} + (1 - \beta_2)\, g_t^2 \\
+
+\text{Bias correction:}\\
+\hat{m}_t &= \frac{m_t}{1 - \beta_1^t},
+\qquad
+\hat{v}_t = \frac{v_t}{1 - \beta_2^t} \\
+
+\text{Parameter update:}\\
+\theta_{t+1}
+&=
+\theta_t
+-
+\eta \, \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \varepsilon}
+\end{align*}
+
+$$
